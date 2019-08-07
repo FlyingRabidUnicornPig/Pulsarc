@@ -2,7 +2,7 @@
 
 namespace Pulsarc.Beatmaps
 {
-    class Arc
+    public class Arc
     {
         public int time;
         public int type;
@@ -13,8 +13,9 @@ namespace Pulsarc.Beatmaps
             this.type = type;
         }
 
-        public string toString()
+        public override string ToString()
         {
+            // timestamp,type -> 432,0110 
             return time + "," + Convert.ToString(type, 2).PadLeft(4, '0');
         }
     }

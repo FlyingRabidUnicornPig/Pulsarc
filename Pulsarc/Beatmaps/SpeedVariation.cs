@@ -2,7 +2,7 @@
 
 namespace Pulsarc.Beatmaps
 {
-    class SpeedVariation
+    public class SpeedVariation
     {
         public int time;
         public int type;
@@ -15,8 +15,9 @@ namespace Pulsarc.Beatmaps
             this.intensity = intensity;
         }
 
-        public string toString()
+        public override string ToString()
         {
+            // timestamp,type,intensity_factor -> 432,1,2.5
             return time + "," + type + "," + intensity.ToString("0.000", CultureInfo.InvariantCulture);
         }
     }

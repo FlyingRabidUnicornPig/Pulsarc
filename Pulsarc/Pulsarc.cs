@@ -1,77 +1,139 @@
-﻿using Microsoft.Xna.Framework;
+using IniParser;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
-using Pulsarc.Gameplay;
-using Pulsarc.Skinning;
+using Pulsarc.UI;
+using Pulsarc.UI.Screens.Gameplay;
+using Pulsarc.UI.Screens.Gameplay.UI;
+using Pulsarc.UI.Screens.MainMenu;
+using Pulsarc.UI.Screens.SongSelect;
 using Pulsarc.Utils;
+using Pulsarc.Utils.BeatmapConversion;
 using System;
 using System.Diagnostics;
+using System.Globalization;
+using System.Threading;
+using Wobble.Input;
+using Wobble.Logging;
+using Wobble.Platform;
+using Wobble.Screens;
+using Wobble.Window;
 
 namespace Pulsarc
 {
     /// <summary>
-    /// This is the main type for your game.
+    /// Main game object
     /// </summary>
     public class Pulsarc : Game
     {
+        static public Pulsarc pulsarc;
         static public GraphicsDeviceManager graphics;
         static public SpriteBatch spriteBatch;
-        static public GameplayEngine gameplayEngine;
 
+        // Width used for reference in making the game responsive
+        static public int xBaseRes = 1920;
+        static public float baseRatio = 16/9f;
 
-        //temp
-        int previousScrollValue;
+        // Whether or not the in-game cursor is displayed 
+        static public bool display_cursor = true;
+        static public Cursor cursor;
+
+        // The camera controlling the game's viewport
+        Camera game_camera;
+        
+
+        // All of these should be brought to other classes
         Stopwatch fpsWatch;
+        FPS fpsDisplay;
+        int fpsResolution;
         static public int frames;
+        bool converting = false;
 
         public Pulsarc()
         {
+            pulsarc = this;
+
+            // Load user config
+            Config.Initialize();
+
+            // Set default resolution if not set, and fullscreen when at least one isn't set.
+            if (Config.getInt("Graphics", "ResolutionWidth") <= 0)
+            {
+                Config.setInt("Graphics","ResolutionWidth",GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Width);
+                Config.setInt("Graphics", "FullScreen", 1);
+            }
+            if (Config.getInt("Graphics", "ResolutionHeight") <= 0)
+            {
+                Config.setInt("Graphics", "ResolutionHeight", GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height);
+                Config.setInt("Graphics", "FullScreen", 1);
+            }
+
+            // Create the game's application window
             graphics = new GraphicsDeviceManager(this);
 
-            // Set the game in fullscreen (according to the user monitor)
-            // TODO : Read from config file for user preference
-            graphics.PreferredBackBufferHeight =(int) (GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height / 1.2f);
-            graphics.PreferredBackBufferWidth = (int) (GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Width / 1.2f);
-            //graphics.IsFullScreen = true;
-            graphics.SynchronizeWithVerticalRetrace = false;
+            // Set Graphics preferences according to config.ini
+            graphics.PreferredBackBufferWidth = Config.getInt("Graphics", "ResolutionWidth");
+            graphics.PreferredBackBufferHeight = Config.getInt("Graphics", "ResolutionHeight");
+            graphics.IsFullScreen = Config.getInt("Graphics", "FullScreen") == 1;
+            graphics.SynchronizeWithVerticalRetrace = Config.getInt("Graphics", "VSync") == 1;
+
+            // Uncap the Update and Draw loop
             base.IsFixedTimeStep = false;
 
             Content.RootDirectory = "Content";
         }
 
         /// <summary>
-        /// Allows the game to perform any initialization it needs to before starting to run.
-        /// This is where it can query for any required services and load any non-graphic
-        /// related content.  Calling base.Initialize will enumerate through any components
-        /// and initialize them as well.
+        /// Initialize most static objects and dependencies
         /// </summary>
         protected override void Initialize()
         {
             base.Initialize();
 
-            Skin.LoadSkin("DefaultSkin");
+            // Copy, if needed, the required assemblies (BASS) for 32 or 64bit CPUs
+            NativeAssemblies.Copy();
 
-            KeyboardInputManager.StartThread();
-            gameplayEngine = new GameplayEngine();
+            // Initialize the logging tool for troubleshooting
+            Logger.Initialize();
 
-            //////
+            // Initialize Discord Rich Presence
+            PulsarcDiscord.Initialize();
 
+            // Set the default culture (Font formatting Locals) for this thread
+            Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+
+            // Start the thread listening for user input
+            InputManager.StartThread();
+
+            // Fps
+            fpsDisplay = new FPS(new Vector2());
+            fpsResolution = 10;
             fpsWatch = new Stopwatch();
             fpsWatch.Start();
-            previousScrollValue = 0;
             frames = 0;
+            
+            // Initialize the game camera
+            game_camera = new Camera(graphics.GraphicsDevice.Viewport, (int) getDimensions().X, (int)getDimensions().Y, 1);
+            game_camera.Pos = new Vector2(getDimensions().X / 2, getDimensions().Y / 2);
+
+            // Create and display the default game screen
+            // (Currently song select for testing, should be Main menu in the future then an intro when in late releases)
+            Menu firstScreen = new Menu();
+            ScreenManager.AddScreen(firstScreen);
+
+            cursor = new Cursor();
         }
 
         /// <summary>
-        /// LoadContent will be called once per game and is the place to load
-        /// all of your content.
+        /// Initialize and load all game compiled content
         /// </summary>
         protected override void LoadContent()
         {
             // Create a new SpriteBatch, which can be used to draw textures.
             spriteBatch = new SpriteBatch(GraphicsDevice);
 
-            // TODO : Load all menu images etc
+            // Initialize and load all game compiled content
+            AssetsManager.Initialize(Content);
         }
 
         /// <summary>
@@ -80,7 +142,7 @@ namespace Pulsarc
         /// </summary>
         protected override void UnloadContent()
         {
-            // TODO: Unload any non ContentManager content here (Skin)
+            AssetsManager.Unload();
         }
 
         /// <summary>
@@ -90,38 +152,38 @@ namespace Pulsarc
         /// <param name="gameTime">Provides a snapshot of timing values.</param>
         protected override void Update(GameTime gameTime)
         {
-            if (GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed || Keyboard.GetState().IsKeyDown(Keys.Escape))
-                Exit();
+            cursor.setPos(MouseManager.CurrentState.Position);
 
-            if (Keyboard.GetState().IsKeyDown(Keys.Enter) && !gameplayEngine.isActive())
-                gameplayEngine.Init("0 - Noone - Test (Adri)", "Noone - Test [test] (Adri)");
-
-            if (Keyboard.GetState().IsKeyDown(Keys.Delete))
-                gameplayEngine.Reset();
-
-            if (Keyboard.GetState().IsKeyDown(Keys.P))
-                gameplayEngine.Pause();
-
-            if (Keyboard.GetState().IsKeyDown(Keys.O))
-                gameplayEngine.Continue();
-
-            var currentMouseState = Mouse.GetState();
-
-            if (currentMouseState.ScrollWheelValue < previousScrollValue)
+            // Temporary measure for converting intralism or osu!mania beatmaps
+            if (!GameplayEngine.active && Keyboard.GetState().IsKeyDown(Keys.S) && ScreenManager.Screens.Peek().GetType().Name == "SongSelection")
             {
-                gameplayEngine.deltaTime(-10);
-            }
-            else if (currentMouseState.ScrollWheelValue > previousScrollValue)
-            {
-                gameplayEngine.deltaTime(10);
-            }
-            previousScrollValue = currentMouseState.ScrollWheelValue;
+                converting = true;
+                BeatmapConverter converter;
 
-            if (gameplayEngine.isActive())
+                Config.Reload();
+                string convertFrom = Config.get["Converting"]["Game"];
+                string toConvert = Config.get["Converting"]["Path"];
+
+                switch (convertFrom.ToLower()) 
+                { 
+                    case "mania":
+                        converter = new ManiaToPulsarc();
+                        break;
+                    default:
+                        converter = new IntralismToPulsarc();
+                        break;
+                }
+
+                converter.Save(toConvert);
+                ((SongSelection)ScreenManager.Screens.Peek()).RefreshBeatmaps();
+            } else if(converting && Keyboard.GetState().IsKeyUp(Keys.S))
             {
-                gameplayEngine.handleInputs();
-                gameplayEngine.Update();
+                converting = false;
             }
+
+            // Let ScreenManager handle the updating of the current active screen
+            ScreenManager.Update(gameTime);
+
             base.Update(gameTime);
         }
 
@@ -131,30 +193,48 @@ namespace Pulsarc
         /// <param name="gameTime">Provides a snapshot of timing values.</param>
         protected override void Draw(GameTime gameTime)
         {
-            spriteBatch.Begin();
+            // Begin the spritebatch in relation to the camera
+            spriteBatch.Begin(SpriteSortMode.Deferred,
+                    null, null, null, null, null,
+                    game_camera.GetTransformation());
 
             GraphicsDevice.Clear(Color.Black);
 
-            if (gameplayEngine.isActive())
-            {
-                frames++;
-                gameplayEngine.Draw();
+            // Let ScreenManager handle the drawing of the current active screen
+            ScreenManager.Draw(gameTime);
 
-                if(fpsWatch.ElapsedMilliseconds > 1000)
-                {
-                    Console.WriteLine(frames + " fps");
-                    frames = 0;
-                    fpsWatch.Restart();
-                }
+            // FPS
+
+            frames++;
+
+            if (fpsWatch.ElapsedMilliseconds > 1000 / fpsResolution)
+            {
+                fpsDisplay.Update(frames * fpsResolution);
+                frames = 0;
+                fpsWatch.Restart();
             }
 
+            fpsDisplay.Draw();
+
             base.Draw(gameTime);
+
+            if(display_cursor)
+                cursor.Draw();
+
             spriteBatch.End();
         }
 
+        /// <summary>
+        /// Used for getting the game's dimensions in a Vector2 object
+        /// </summary>
         static public Vector2 getDimensions()
         {
             return new Vector2(graphics.GraphicsDevice.Viewport.Width, graphics.GraphicsDevice.Viewport.Height);
+        }
+
+        static public void Quit()
+        {
+            pulsarc.Exit();
         }
     }
 }

@@ -1,7 +1,7 @@
 ﻿
 namespace Pulsarc.Beatmaps
 {
-    class TimingPoint
+    public class TimingPoint
     {
         public int time;
         public int bpm;
@@ -12,7 +12,7 @@ namespace Pulsarc.Beatmaps
             this.bpm = bpm;
         }
 
-        public string toString()
+        public override string ToString()
         {
             return time + "," + bpm;
         }
